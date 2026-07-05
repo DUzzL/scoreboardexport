@@ -1,14 +1,21 @@
 package com.example;
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.players.NameAndId;
+import net.minecraft.server.players.PlayerList;
+import net.minecraft.server.players.StoredUserEntry;
+import net.minecraft.server.players.UserBanList;
+import net.minecraft.server.players.UserBanListEntry;
 import net.minecraft.world.scores.Objective;
 import net.minecraft.world.scores.PlayerScoreEntry;
 import net.minecraft.world.scores.Scoreboard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Reads player statistics directly from the running server's in-memory
@@ -18,27 +25,25 @@ import java.util.Map;
  * runs server-side, it has live access to the scoreboard object and can read
  * the current values without touching disk.
  *
- * Tracked objectives:
- *   - bac_advancements  (number of advancements earned)
- *   - hc_playTimeShow   (play time, raw unit assumed to be minutes — see README)
+ * The objectives to expose are configurable via {@link StatsConfig#objectives()}.
+ * If {@link StatsConfig#hideBannedPlayers()} is true, banned players are
+ * excluded from the result.
  */
 public final class ScoreboardReader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(StatsExporterMod.MOD_ID);
 
-    // Objective names as they appear in the vanilla scoreboard.
-    static final String OBJ_ADVANCEMENTS = "bac_advancements";
-    static final String OBJ_PLAY_TIME = "hc_playTimeShow";
-
     private final MinecraftServer server;
+    private final StatsConfig config;
 
-    ScoreboardReader(MinecraftServer server) {
+    ScoreboardReader(MinecraftServer server, StatsConfig config) {
         this.server = server;
+        this.config = config;
     }
 
     /**
      * Build a map of player name -> stats for all players that have at least
-     * one of the tracked objectives set.
+     * one of the configured objectives set.
      *
      * @return an ordered map (player name -> stats); empty if no data exists
      */
@@ -50,10 +55,16 @@ public final class ScoreboardReader {
             return result;
         }
 
-        // Collect scores for each tracked objective independently, then merge
-        // by player name. A player may have one objective but not the other.
-        collectObjective(scoreboard, OBJ_ADVANCEMENTS, result, true);
-        collectObjective(scoreboard, OBJ_PLAY_TIME, result, false);
+        // Collect scores for each configured objective independently, then
+        // merge by player name. A player may have some objectives but not others.
+        for (String objectiveName : config.objectives()) {
+            collectObjective(scoreboard, objectiveName, result);
+        }
+
+        // Optionally remove banned players from the result.
+        if (config.hideBannedPlayers() && !result.isEmpty()) {
+            removeBannedPlayers(result);
+        }
 
         return result;
     }
@@ -64,7 +75,7 @@ public final class ScoreboardReader {
      * returns one {@link PlayerScoreEntry} per tracked player.
      */
     private void collectObjective(Scoreboard scoreboard, String objectiveName,
-                                  Map<String, PlayerStats> result, boolean isAdvancements) {
+                                  Map<String, PlayerStats> result) {
         Objective objective = scoreboard.getObjective(objectiveName);
         if (objective == null) {
             // Objective not registered yet — nothing to read for this metric.
@@ -80,11 +91,7 @@ public final class ScoreboardReader {
                 int value = entry.value();
 
                 PlayerStats stats = result.computeIfAbsent(name, PlayerStats::new);
-                if (isAdvancements) {
-                    stats.advancements = value;
-                } else {
-                    stats.playTimeShow = value;
-                }
+                stats.scores.put(objectiveName, value);
             }
         } catch (Throwable t) {
             // Defensive: never let a scoreboard read crash the cache refresh.
@@ -92,11 +99,47 @@ public final class ScoreboardReader {
         }
     }
 
+    /**
+     * Remove banned players from the result map. Collects the banned player
+     * names from the server's {@link UserBanList} and removes any matching
+     * entry. Comparing by name (rather than UUID) is reliable here because
+     * the scoreboard also keys on player names.
+     */
+    private void removeBannedPlayers(Map<String, PlayerStats> result) {
+        try {
+            PlayerList playerList = server.getPlayerList();
+            if (playerList == null) {
+                return;
+            }
+            UserBanList banList = playerList.getBans();
+            if (banList == null || banList.isEmpty()) {
+                return;
+            }
+            // Collect the lowercase names of all banned players so we can
+            // do a case-insensitive comparison without creating NameAndId
+            // objects (which would generate offline UUIDs that don't match
+            // online-mode bans).
+            Set<String> bannedNames = new HashSet<>();
+            for (StoredUserEntry<NameAndId> entry : banList.getEntries()) {
+                NameAndId nameAndId = entry.getUser();
+                if (nameAndId != null && nameAndId.name() != null) {
+                    bannedNames.add(nameAndId.name().toLowerCase());
+                }
+            }
+            if (bannedNames.isEmpty()) {
+                return;
+            }
+            result.entrySet().removeIf(entry ->
+                    bannedNames.contains(entry.getKey().toLowerCase()));
+        } catch (Throwable t) {
+            LOGGER.warn("Failed to filter banned players: {}", t.getMessage());
+        }
+    }
+
     /** Simple holder for one player's exported stats. */
     static final class PlayerStats {
         final String name;
-        int advancements = 0;
-        int playTimeShow = 0;
+        final Map<String, Integer> scores = new LinkedHashMap<>();
 
         PlayerStats(String name) {
             this.name = name;

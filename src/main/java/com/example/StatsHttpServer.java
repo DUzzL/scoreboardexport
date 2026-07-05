@@ -2,6 +2,7 @@ package com.example;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -114,14 +115,26 @@ public final class StatsHttpServer {
 
     /** Build the JSON response string from the current scoreboard data. */
     private String buildJson(Map<String, ScoreboardReader.PlayerStats> data) {
-        List<PlayerJson> players = data.values().stream()
-                .map(p -> new PlayerJson(p.name, p.advancements, p.playTimeShow))
+        // Build a JsonObject per player so the objective field names come
+        // directly from the config (they are not known at compile time).
+        List<JsonObject> players = data.values().stream()
+                .map(this::playerToJson)
                 .toList();
 
         StatsJson root = new StatsJson(
                 DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
                 players);
         return GSON.toJson(root);
+    }
+
+    /** Convert one player's stats to a JSON object with dynamic objective fields. */
+    private JsonObject playerToJson(ScoreboardReader.PlayerStats p) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("name", p.name);
+        for (Map.Entry<String, Integer> entry : p.scores.entrySet()) {
+            obj.addProperty(entry.getKey(), entry.getValue());
+        }
+        return obj;
     }
 
     /** HTTP handler for GET /api/stats — serves the cached JSON snapshot. */
@@ -184,24 +197,11 @@ public final class StatsHttpServer {
     /** Top-level JSON object. */
     private static final class StatsJson {
         final String lastUpdated;
-        final List<PlayerJson> players;
+        final List<JsonObject> players;
 
-        StatsJson(String lastUpdated, List<PlayerJson> players) {
+        StatsJson(String lastUpdated, List<JsonObject> players) {
             this.lastUpdated = lastUpdated;
             this.players = players;
-        }
-    }
-
-    /** Per-player JSON object. */
-    private static final class PlayerJson {
-        final String name;
-        final int bac_advancements;
-        final int hc_playTimeShow;
-
-        PlayerJson(String name, int advancements, int playTimeShow) {
-            this.name = name;
-            this.bac_advancements = advancements;
-            this.hc_playTimeShow = playTimeShow;
         }
     }
 }

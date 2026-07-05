@@ -37,7 +37,7 @@ public final class StatsExporterMod implements ModInitializer {
         try {
             Path configDir = server.getServerDirectory().resolve("config");
             StatsConfig config = StatsConfig.load(configDir);
-            ScoreboardReader reader = new ScoreboardReader(server);
+            ScoreboardReader reader = new ScoreboardReader(server, config);
 
             httpServer = new StatsHttpServer(config, reader);
             httpServer.start();
