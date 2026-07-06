@@ -14,6 +14,9 @@ NBT, because it runs server-side and has direct in-memory access.
 - Optionally hides banned players from the response.
 - CORS-restricted to your website's origin.
 - Cached snapshot — recomputed every 5–15 minutes, served cheaply per request.
+- Fully asynchronous — all refresh/serving work runs on idle-priority daemon
+  threads (`SCHED_IDLE` on Linux, no JVM flags needed); the server thread
+  only does a sub-millisecond snapshot copy.
 - Simple rate limiting (30 requests/second).
 - No dependencies beyond Fabric API.
 
@@ -261,6 +264,47 @@ Requirements: Java 25, Gradle (the wrapper is included).
 ```
 
 The built jar is at `build/libs/statsexporter-<version>.jar`.
+
+---
+
+## Performance notes
+
+All of the mod's own work (JSON serialization, encoding, HTTP request
+handling) runs on daemon threads at the lowest scheduling priority the
+platform offers, so it never competes seriously with the server for CPU. The
+only thing executed on the server thread is the scoreboard snapshot itself —
+a plain copy of player names and scores, sub-millisecond even for thousands
+of players — because live server data may only be touched safely from the
+server thread. Responses are served from pre-encoded bytes, so requests
+allocate almost nothing.
+
+**No JVM flags, root access or extra configuration are needed** — each mod
+thread demotes itself on startup:
+
+- **Linux** (including Pterodactyl/Docker hosts): mod threads move themselves
+  into the kernel's *idle* scheduling class (`SCHED_IDLE`) and to the weakest
+  nice level (19), calling libc directly via the Java FFM API. Idle-class
+  threads only run on CPU time no other thread wants, so the exporter cannot
+  meaningfully take CPU away from the server. Lowering a thread's own
+  priority is always permitted — no privileges needed, works inside
+  containers. Threads created internally by the JDK HTTP server inherit the
+  demotion.
+- **Windows:** the JVM honors `Thread.MIN_PRIORITY` natively.
+- Anywhere the OS-level calls are unavailable or denied, the mod logs what it
+  fell back to and continues with plain Java thread priorities.
+
+On first start the JVM may print a one-time notice like:
+
+```
+WARNING: A restricted method in java.lang.foreign.Linker has been called
+WARNING: ... called by com.example.ThreadDemotion in an unnamed module
+```
+
+This is expected and harmless — it is the JVM flagging any code that calls
+into the OS, and the mod degrades gracefully if such calls are ever blocked.
+You can optionally silence it by adding `--enable-native-access=ALL-UNNAMED`
+to the JVM arguments (purely cosmetic; not required for the demotion to
+work).
 
 ---
 
