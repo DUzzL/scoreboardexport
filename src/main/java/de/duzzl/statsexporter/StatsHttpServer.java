@@ -1,4 +1,4 @@
-package com.example;
+package de.duzzl.statsexporter;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;

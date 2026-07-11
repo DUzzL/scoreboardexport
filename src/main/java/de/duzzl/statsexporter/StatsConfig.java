@@ -1,4 +1,4 @@
-package com.example;
+package de.duzzl.statsexporter;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -67,7 +67,7 @@ public final class StatsConfig {
         TomlParseResult root = Toml.parse(Files.readString(configPath));
         if (root.hasErrors()) throw new IOException(root.errors().toString());
         Long portValue = root.getLong("port");
-        port = portValue == null ? DEFAULT_PORT : portValue.intValue();
+        port = validPort(portValue == null ? DEFAULT_PORT : portValue.intValue());
         Long interval = root.getLong("cacheIntervalMinutes");
         cacheIntervalMinutes = clamp(interval == null ? DEFAULT_CACHE_INTERVAL_MINUTES : interval.intValue());
         allowedOrigin = stringOr(root.getString("allowedOrigin"), DEFAULT_ALLOWED_ORIGIN);
@@ -80,7 +80,7 @@ public final class StatsConfig {
     /** One-time compatibility path; the old JSON is deliberately left untouched. */
     private void readLegacyJson(Path legacyPath) throws IOException {
         JsonObject root = JsonParser.parseString(Files.readString(legacyPath)).getAsJsonObject();
-        port = parsePort(root.get("port"));
+        port = validPort(parsePort(root.get("port")));
         cacheIntervalMinutes = clamp(root.has("cacheIntervalMinutes") ? root.get("cacheIntervalMinutes").getAsInt() : DEFAULT_CACHE_INTERVAL_MINUTES);
         allowedOrigin = root.has("allowedOrigin") ? root.get("allowedOrigin").getAsString() : DEFAULT_ALLOWED_ORIGIN;
         objectives = root.has("objectives") && root.get("objectives").isJsonArray() ? jsonArray(root.getAsJsonArray("objectives")) : List.of();
@@ -142,6 +142,11 @@ public final class StatsConfig {
     }
 
     private static int parsePort(JsonElement value) { try { return value == null ? DEFAULT_PORT : Integer.parseInt(value.getAsString().trim()); } catch (Exception ignored) { return DEFAULT_PORT; } }
+    private static int validPort(int value) {
+        if (value >= 1 && value <= 65535) return value;
+        LOGGER.warn("Port {} is outside the valid range 1-65535. Using {} instead.", value, DEFAULT_PORT);
+        return DEFAULT_PORT;
+    }
     private static int clamp(int value) { return Math.max(MIN_CACHE_INTERVAL_MINUTES, Math.min(MAX_CACHE_INTERVAL_MINUTES, value)); }
     private static String stringOr(String value, String fallback) { return value == null || value.isBlank() ? fallback : value.trim(); }
     private static List<String> stringArray(TomlArray values) { List<String> result = new ArrayList<>(); if (values != null) for (int i = 0; i < values.size(); i++) { String value = values.getString(i); if (value != null && !value.isBlank()) result.add(value.trim()); } return result; }

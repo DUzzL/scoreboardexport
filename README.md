@@ -42,7 +42,8 @@ port = 8790
 # The cache refresh interval. It must be between 5 and 15 minutes.
 cacheIntervalMinutes = 10
 
-# Keep this as "*" when you only use the included page.
+# Keep this as "*" when you only use the included page. If you build another
+# website, put that website's full origin here instead.
 allowedOrigin = "*"
 
 # Names from /scoreboard objectives list.
@@ -106,11 +107,14 @@ Cloudflare.
 ### Cloudflare Worker
 
 Create a Worker in the Cloudflare dashboard and replace its code with this.
-Set `upstream` to the public hostname and port from your hosting panel. It
+Set `upstream` to the public hostname and port from your hosting panel. Set
+`allowedOrigin` to the website that should be allowed to call `/api/stats`.
+For the included dashboard, use the Worker or custom-domain URL itself. It
 forwards both the built-in website and the API.
 
 ```js
 const upstream = "http://your-server-address:8790";
+const allowedOrigin = "https://stats.example.com";
 
 export default {
   async fetch(request) {
@@ -140,7 +144,7 @@ export default {
 
 function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   };
@@ -151,6 +155,14 @@ Deploy the Worker and open its `workers.dev` URL. The dashboard should load at
 the root URL. You can later attach a custom domain such as
 `https://stats.example.com/` in the Worker's **Settings** under **Domains &
 Routes**.
+
+If you use a custom domain, change `allowedOrigin` in both places: the Worker
+code and `config/statsexporter.toml`. For example, the built-in page at
+`https://stats.example.com/` needs this TOML setting:
+
+```toml
+allowedOrigin = "https://stats.example.com"
+```
 
 > Cloudflare Workers cannot use a bare IP address on a non-standard port.
 > Use the hostname supplied by your host instead.
@@ -185,8 +197,9 @@ Example response:
 ```
 
 The API response is cached according to `cacheIntervalMinutes`. A browser can
-only call it from origins allowed by `allowedOrigin` in the TOML config. Use
-your custom site's full origin, for example:
+only call it from origins allowed by `allowedOrigin` in the TOML config. If you
+use the Cloudflare Worker above, set the same origin in its `allowedOrigin`
+constant. Use your custom site's full origin, for example:
 
 ```toml
 allowedOrigin = "https://example.com"
